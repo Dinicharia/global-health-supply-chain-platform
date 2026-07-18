@@ -1,0 +1,79 @@
+# =============================================================================
+# Pipeline Configuration — Global Health Supply Chain Intelligence Platform
+# =============================================================================
+# This file holds business-tunable thresholds and source definitions.
+# It does NOT hold secrets (see .env) or engineering-only constants (see code).
+# Changing a value here should never require a code change or redeploy —
+# only a pipeline re-run.
+
+# -----------------------------------------------------------------------------
+# Shipment delay detection (implements FR-03 from the BRD)
+# -----------------------------------------------------------------------------
+shipment_delay:
+  # A shipment is flagged "delayed" if actual/projected arrival exceeds
+  # ETA by more than this many days. Set by Logistics, not Engineering —
+  # this is exactly the kind of value that must never be hardcoded (NFR-07).
+  delay_threshold_days: 3
+
+# -----------------------------------------------------------------------------
+# Medicine expiry risk (implements FR-05 from the BRD)
+# -----------------------------------------------------------------------------
+medicine_expiry:
+  # Medicines expiring within this window are flagged as at-risk.
+  # Default matches the business requirement stated in the BRD (90 days),
+  # but individual medicine categories could override this later
+  # (e.g. vaccines might need a longer buffer — noted as a future extension,
+  # not built yet, to avoid over-engineering ahead of an actual requirement).
+  expiry_warning_days: 90
+
+# -----------------------------------------------------------------------------
+# Inventory thresholds (implements FR-06 from the BRD)
+# -----------------------------------------------------------------------------
+inventory_thresholds:
+  # Global fallback thresholds. Per-warehouse/per-medicine overrides belong
+  # in the database (dim_warehouse / dim_medicine), not here — this value
+  # only applies when no more specific override exists.
+  default_min_stock_units: 100
+  default_max_stock_units: 10000
+
+# -----------------------------------------------------------------------------
+# Internal data sources (implements FR-01)
+# -----------------------------------------------------------------------------
+# Each entry tells the extraction layer where to find a source and what
+# format to expect. Adding a new internal source = adding an entry here,
+# NOT writing new extraction code (this is the NFR-07 payoff in practice).
+internal_sources:
+  - name: supplier_master
+    file_format: csv
+    path: data/raw/supplier_master.csv
+  - name: medicine_catalogue
+    file_format: csv
+    path: data/raw/medicine_catalogue.csv
+  - name: purchase_orders
+    file_format: json
+    path: data/raw/purchase_orders.json
+  - name: shipment_records
+    file_format: json
+    path: data/raw/shipment_records.json
+  - name: warehouse_inventory
+    file_format: csv
+    path: data/raw/warehouse_inventory.csv
+
+# -----------------------------------------------------------------------------
+# External data sources (implements FR-02)
+# -----------------------------------------------------------------------------
+# use_live_api: true attempts a real API call; false always uses simulated
+# data. This flag is what lets us develop and test offline, and is also
+# our documented fallback per the Phase 1 "Assumptions" section.
+external_sources:
+  - name: weather
+    use_live_api: false
+  - name: exchange_rates
+    use_live_api: false
+  - name: fuel_prices
+    use_live_api: false
+
+# -----------------------------------------------------------------------------
+# Environment behavior
+# -----------------------------------------------------------------------------
+environment: local   # local | staging | production — affects logging verbosity

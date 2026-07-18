@@ -1,0 +1,76 @@
+# =============================================================================
+# Logging Configuration — Global Health Supply Chain Intelligence Platform
+# =============================================================================
+# Configures Python's built-in `logging` module using its standard
+# dictConfig schema. We use structured (JSON) output, per the Phase 2
+# Logging Strategy decision — logs are a queryable dataset, not just text
+# for a human to scroll through.
+
+version: 1
+disable_existing_loggers: false
+
+# -----------------------------------------------------------------------------
+# Formatters: HOW a log line is shaped
+# -----------------------------------------------------------------------------
+formatters:
+  json:
+    # We reference a formatter class we'll write in src/utils/logging_setup.py
+    # in the next step — PyYAML alone can't produce JSON formatting, so this
+    # points to real Python code, not a built-in.
+    (): src.utils.logging_setup.JsonFormatter
+
+# -----------------------------------------------------------------------------
+# Handlers: WHERE a log line goes
+# -----------------------------------------------------------------------------
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: json
+    level: INFO
+    # Console output matters even with file logging — this is what you see
+    # live in `docker compose logs`, our primary real-time debugging tool.
+
+  pipeline_file:
+    class: logging.FileHandler
+    formatter: json
+    level: INFO
+    filename: logs/pipeline/pipeline.log
+    encoding: utf8
+
+  api_file:
+    class: logging.FileHandler
+    formatter: json
+    level: INFO
+    filename: logs/api/api.log
+    encoding: utf8
+
+  error_file:
+    class: logging.FileHandler
+    formatter: json
+    level: ERROR
+    filename: logs/error/error.log
+    encoding: utf8
+    # Deliberately separate from pipeline_file (Phase 2 decision): an on-call
+    # engineer should be able to watch ONLY this file/stream for alerting,
+    # without INFO-level noise drowning out real failures.
+
+# -----------------------------------------------------------------------------
+# Loggers: WHICH parts of the codebase use which handlers
+# -----------------------------------------------------------------------------
+loggers:
+  pipeline:
+    level: INFO
+    handlers: [console, pipeline_file, error_file]
+    propagate: false
+
+  api:
+    level: INFO
+    handlers: [console, api_file, error_file]
+    propagate: false
+
+# Root logger: catches anything not explicitly named above (e.g. third-party
+# library logs) so nothing is silently lost, but keeps it console-only to
+# avoid polluting our structured log files with noise we don't control.
+root:
+  level: WARNING
+  handlers: [console]
