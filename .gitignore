@@ -1,0 +1,41 @@
+# Environment & secrets — NEVER commit real credentials
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# pyenv-generated version marker for THIS repo — actually, we DO want to track this
+# (see note below — .python-version is intentionally NOT listed here)
+
+# Local data files — these are runtime output, not source code, and can be large
+data/bronze/*
+data/silver/*
+data/gold/*
+!data/bronze/.gitkeep
+!data/silver/.gitkeep
+!data/gold/.gitkeep
+
+# Logs — runtime output, regenerated every run, not meaningful to version
+logs/pipeline/*
+logs/api/*
+logs/transformation/*
+logs/error/*
+!logs/pipeline/.gitkeep
+!logs/api/.gitkeep
+!logs/transformation/.gitkeep
+!logs/error/.gitkeep
+
+# Backups — large binary dumps, don't belong in git history
+backups/*
+!backups/.gitkeep
+
+# VS Code local settings (keep shared settings, ignore personal ones)
+.vscode/*
+!.vscode/settings.json
+
+# OS-generated files
+.DS_Store
+Thumbs.db
