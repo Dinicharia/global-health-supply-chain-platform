@@ -17,6 +17,8 @@ data/gold/*
 !data/bronze/.gitkeep
 !data/silver/.gitkeep
 !data/gold/.gitkeep
+data/raw/*
+!data/raw/.gitkeep
 
 # Logs — runtime output, regenerated every run, not meaningful to version
 logs/pipeline/*
