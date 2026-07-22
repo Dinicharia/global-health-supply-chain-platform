@@ -46,18 +46,23 @@ internal_sources:
   - name: supplier_master
     file_format: csv
     path: data/raw/supplier_master.csv
+    bronze_table: supplier_master_raw
   - name: medicine_catalogue
     file_format: csv
     path: data/raw/medicine_catalogue.csv
+    bronze_table: medicine_catalogue_raw
   - name: purchase_orders
     file_format: json
     path: data/raw/purchase_orders.json
+    bronze_table: purchase_orders_raw
   - name: shipment_records
     file_format: json
     path: data/raw/shipment_records.json
+    bronze_table: shipment_records_raw
   - name: warehouse_inventory
     file_format: csv
     path: data/raw/warehouse_inventory.csv
+    bronze_table: warehouse_inventory_raw
 
 # -----------------------------------------------------------------------------
 # External data sources (implements FR-02)
