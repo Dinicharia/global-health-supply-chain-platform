@@ -1,0 +1,44 @@
+# =============================================================================
+# Prefect Deployment Configuration
+# =============================================================================
+# Purpose: declaratively defines WHEN and HOW our pipeline flow runs
+#          unattended, implementing FR-10 (unattended daily run). Kept
+#          separate from flows/pipeline_flow.py's Python code -- schedule
+#          changes should never require touching pipeline logic, same
+#          config-over-code principle as pipeline_config.yaml.
+#
+# Prerequisite: a Prefect server must be running (see README.md,
+#          "Running the Prefect Server") before deploying or triggering
+#          this.
+# =============================================================================
+
+# name: identifies this project to Prefect's deployment tooling.
+name: global-health-supply-chain-platform
+
+# Prefect needs to know how to actually invoke our flow function --
+# entrypoint format is "path/to/file.py:function_name".
+deployments:
+- name: daily-pipeline-run
+  entrypoint: flows/pipeline_flow.py:run_pipeline
+  schedules:
+  - cron: 0 2 * * *
+    timezone:
+    day_or: true
+    active: true
+  work_pool:
+    name: local-process-pool
+    work_queue_name: default
+    job_variables: {}
+  version:
+  tags: []
+  concurrency_limit:
+  description: "Runs the full daily pipeline: generate -> Bronze -> Silver -> Gold.\n\
+    \nThis is the single entry point FR-10 (unattended daily run) depends\non -- once
+    deployed with a schedule (a later step in this phase),\nthis function is what
+    actually executes every day with no manual\nintervention required."
+  parameters: {}
+  enforce_parameter_schema: true
+  pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: C:\Users\Daniel 
+        Njoroge\Downloads\D\global-health-supply-chain-platform
