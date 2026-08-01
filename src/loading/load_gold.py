@@ -58,20 +58,26 @@ def calculate_delay_days(eta: date, actual_arrival: date | None) -> int | None:
     return max((actual_arrival - eta).days, 0)
 
 
-def populate_dim_date(engine: Engine, start_year: int = 2023, end_year: int = 2027) -> int:
+def build_date_dimension_rows(start_year: int, end_year: int) -> list[dict]:
     """
-    Generate and load a complete calendar dimension covering start_year
-    through end_year, inclusive.
+    Build the full list of calendar dimension rows for a year range, as
+    plain dicts -- no database involved.
 
-    Business/architecture context:
-        Independent of any source data -- see module docstring. Range
-        chosen to comfortably cover our sample data's order_date/eta
-        spread (contract_start_date goes back ~3 years, eta goes up to
-        ~60 days forward from generation time).
+    Design note (refactor):
+        Deliberately separated from populate_dim_date()'s database write
+        so this logic is unit-testable with plain Python assertions,
+        matching the same pure-function pattern established in
+        src/transformation/validators.py. A bug in date-key formatting,
+        quarter calculation, or weekend detection should be catchable
+        without a live database connection.
+
+    Args:
+        start_year: First year to include (Jan 1).
+        end_year: Last year to include (Dec 31), inclusive.
 
     Returns:
-        Number of date rows inserted (skips re-inserting existing dates,
-        so this function is safely re-runnable).
+        List of dicts, one per calendar day, matching gold.dim_date's
+        columns exactly.
     """
     rows = []
     current = date(start_year, 1, 1)
@@ -92,7 +98,27 @@ def populate_dim_date(engine: Engine, start_year: int = 2023, end_year: int = 20
         })
         current += timedelta(days=1)
 
+    return rows
+
+
+def populate_dim_date(engine: Engine, start_year: int = 2023, end_year: int = 2027) -> int:
+    """
+    Generate and load a complete calendar dimension covering start_year
+    through end_year, inclusive.
+
+    Business/architecture context:
+        Independent of any source data -- see module docstring. Range
+        chosen to comfortably cover our sample data's order_date/eta
+        spread (contract_start_date goes back ~3 years, eta goes up to
+        ~60 days forward from generation time).
+
+    Returns:
+        Number of date rows inserted (skips re-inserting existing dates,
+        so this function is safely re-runnable).
+    """
+    rows = build_date_dimension_rows(start_year, end_year)
     df = pd.DataFrame(rows)
+
     with engine.begin() as conn:
         for _, row in df.iterrows():
             conn.execute(
@@ -263,9 +289,6 @@ def populate_fact_shipment(engine: Engine) -> int:
             conn,
         )
 
-        # Resolve every dimension's surrogate keys once, upfront -- same
-        # "fetch once, not per-row" performance pattern established in
-        # Phase 5's load_purchase_orders.
         dim_supplier = pd.read_sql(text("SELECT supplier_id, supplier_key FROM gold.dim_supplier"), conn)
         dim_medicine = pd.read_sql(text("SELECT medicine_id, medicine_key FROM gold.dim_medicine"), conn)
         dim_warehouse = pd.read_sql(text("SELECT warehouse_id, warehouse_key FROM gold.dim_warehouse"), conn)
