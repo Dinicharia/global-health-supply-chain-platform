@@ -44,3 +44,6 @@ Thumbs.db
 
 # Virtual environment
 .venv/
+
+# Prefect local state (project-isolated, see .env PREFECT_HOME)
+.prefect/
