@@ -13,6 +13,20 @@ Design pattern:
     re-running this module doesn't reprocess the whole history every
     time -- only genuinely new Bronze rows, which matters for NFR-03
     (batch window performance) as data volume grows over time.
+
+Bug fix (see conversation history): a row's Bronze bronze_id is always
+    new on every extraction run, even when the underlying natural key
+    (e.g. supplier_id) already exists in Silver -- this happens whenever
+    generate_sample_data.py is re-run, since it's seeded and reproduces
+    the SAME suppliers/medicines/etc every time, but as fresh Bronze
+    rows. Our "unprocessed" filter (by bronze_id) correctly lets these
+    through for validation, but the INSERT's ON CONFLICT (natural_key)
+    DO NOTHING then silently no-ops at the database level. Previously,
+    we counted every row that passed VALIDATION as "passed," which
+    conflated "successfully validated" with "actually inserted a new
+    row" -- producing ever-inflating counts on repeated runs even though
+    nothing new was genuinely happening. Every loader below now checks
+    the INSERT's actual rowcount and separately tracks rows_skipped_duplicate.
 """
 
 import json
@@ -40,7 +54,11 @@ def get_unprocessed_bronze_rows(engine: Engine, bronze_table: str, silver_table:
 
     Business/architecture context:
         This is what makes Silver loading incremental (NFR-03) rather
-        than reprocessing the entire Bronze history on every run.
+        than reprocessing the entire Bronze history on every run. Note
+        this filters by bronze_id, NOT by natural key -- see module
+        docstring for why a duplicate natural key can still reach the
+        validator, and why the loaders below must check INSERT rowcount
+        separately.
 
     Args:
         engine: Database engine.
@@ -116,17 +134,19 @@ def write_to_quarantine(
         })
 
 
-def load_supplier_master(engine: Engine, run_id: str) -> tuple[int, int]:
+def load_supplier_master(engine: Engine, run_id: str) -> tuple[int, int, int]:
     """
     Process all unprocessed bronze.supplier_master_raw rows.
 
     Returns:
-        (rows_passed, rows_quarantined) -- reported back to the caller
-        for logging, matching the structured "rows_processed" pattern
-        established in src/extraction/internal_sources.py.
+        (rows_passed, rows_quarantined, rows_skipped_duplicate) --
+        rows_passed counts ONLY genuinely new inserts (INSERT rowcount
+        > 0); rows_skipped_duplicate counts rows that validated
+        successfully but whose natural key already existed in Silver
+        (ON CONFLICT DO NOTHING silently no-op'd). See module docstring.
     """
     df = get_unprocessed_bronze_rows(engine, "supplier_master_raw", "supplier_master")
-    passed, quarantined = 0, 0
+    passed, quarantined, skipped_duplicate = 0, 0, 0
 
     for _, row in df.iterrows():
         row_dict = row.to_dict()
@@ -143,8 +163,11 @@ def load_supplier_master(engine: Engine, run_id: str) -> tuple[int, int]:
                 ON CONFLICT (supplier_id) DO NOTHING
             """)
             with engine.begin() as conn:
-                conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
-            passed += 1
+                result_proxy = conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
+            if result_proxy.rowcount > 0:
+                passed += 1
+            else:
+                skipped_duplicate += 1
         else:
             write_to_quarantine(
                 engine, "supplier_master", "supplier_master", row_dict,
@@ -152,13 +175,13 @@ def load_supplier_master(engine: Engine, run_id: str) -> tuple[int, int]:
             )
             quarantined += 1
 
-    return passed, quarantined
+    return passed, quarantined, skipped_duplicate
 
 
-def load_medicine_catalogue(engine: Engine, run_id: str) -> tuple[int, int]:
-    """Process all unprocessed bronze.medicine_catalogue_raw rows."""
+def load_medicine_catalogue(engine: Engine, run_id: str) -> tuple[int, int, int]:
+    """Process all unprocessed bronze.medicine_catalogue_raw rows. See load_supplier_master docstring."""
     df = get_unprocessed_bronze_rows(engine, "medicine_catalogue_raw", "medicine_catalogue")
-    passed, quarantined = 0, 0
+    passed, quarantined, skipped_duplicate = 0, 0, 0
 
     for _, row in df.iterrows():
         row_dict = row.to_dict()
@@ -173,8 +196,11 @@ def load_medicine_catalogue(engine: Engine, run_id: str) -> tuple[int, int]:
                 ON CONFLICT (medicine_id) DO NOTHING
             """)
             with engine.begin() as conn:
-                conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
-            passed += 1
+                result_proxy = conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
+            if result_proxy.rowcount > 0:
+                passed += 1
+            else:
+                skipped_duplicate += 1
         else:
             write_to_quarantine(
                 engine, "medicine_catalogue", "medicine_catalogue", row_dict,
@@ -182,12 +208,13 @@ def load_medicine_catalogue(engine: Engine, run_id: str) -> tuple[int, int]:
             )
             quarantined += 1
 
-    return passed, quarantined
+    return passed, quarantined, skipped_duplicate
 
 
-def load_purchase_orders(engine: Engine, run_id: str) -> tuple[int, int]:
+def load_purchase_orders(engine: Engine, run_id: str) -> tuple[int, int, int]:
     """
     Process all unprocessed bronze.purchase_orders_raw rows.
+    See load_supplier_master docstring for the passed/skipped_duplicate distinction.
 
     Note: fetches known_supplier_ids/known_medicine_ids ONCE, upfront,
     rather than querying per-row -- a per-row query here would mean 200+
@@ -196,7 +223,7 @@ def load_purchase_orders(engine: Engine, run_id: str) -> tuple[int, int]:
     pattern for referential checks at this scale.
     """
     df = get_unprocessed_bronze_rows(engine, "purchase_orders_raw", "purchase_orders")
-    passed, quarantined = 0, 0
+    passed, quarantined, skipped_duplicate = 0, 0, 0
 
     with engine.connect() as conn:
         known_supplier_ids = set(pd.read_sql(text("SELECT supplier_id FROM silver.supplier_master"), conn)["supplier_id"])
@@ -215,8 +242,11 @@ def load_purchase_orders(engine: Engine, run_id: str) -> tuple[int, int]:
                 ON CONFLICT (po_id) DO NOTHING
             """)
             with engine.begin() as conn:
-                conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
-            passed += 1
+                result_proxy = conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
+            if result_proxy.rowcount > 0:
+                passed += 1
+            else:
+                skipped_duplicate += 1
         else:
             write_to_quarantine(
                 engine, "purchase_orders", "purchase_orders", row_dict,
@@ -224,13 +254,13 @@ def load_purchase_orders(engine: Engine, run_id: str) -> tuple[int, int]:
             )
             quarantined += 1
 
-    return passed, quarantined
+    return passed, quarantined, skipped_duplicate
 
 
-def load_shipment_records(engine: Engine, run_id: str) -> tuple[int, int]:
-    """Process all unprocessed bronze.shipment_records_raw rows."""
+def load_shipment_records(engine: Engine, run_id: str) -> tuple[int, int, int]:
+    """Process all unprocessed bronze.shipment_records_raw rows. See load_supplier_master docstring."""
     df = get_unprocessed_bronze_rows(engine, "shipment_records_raw", "shipment_records")
-    passed, quarantined = 0, 0
+    passed, quarantined, skipped_duplicate = 0, 0, 0
 
     with engine.connect() as conn:
         known_po_ids = set(pd.read_sql(text("SELECT po_id FROM silver.purchase_orders"), conn)["po_id"])
@@ -250,8 +280,11 @@ def load_shipment_records(engine: Engine, run_id: str) -> tuple[int, int]:
                 ON CONFLICT (shipment_id) DO NOTHING
             """)
             with engine.begin() as conn:
-                conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
-            passed += 1
+                result_proxy = conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
+            if result_proxy.rowcount > 0:
+                passed += 1
+            else:
+                skipped_duplicate += 1
         else:
             write_to_quarantine(
                 engine, "shipment_records", "shipment_records", row_dict,
@@ -259,13 +292,13 @@ def load_shipment_records(engine: Engine, run_id: str) -> tuple[int, int]:
             )
             quarantined += 1
 
-    return passed, quarantined
+    return passed, quarantined, skipped_duplicate
 
 
-def load_warehouse_inventory(engine: Engine, run_id: str) -> tuple[int, int]:
-    """Process all unprocessed bronze.warehouse_inventory_raw rows."""
+def load_warehouse_inventory(engine: Engine, run_id: str) -> tuple[int, int, int]:
+    """Process all unprocessed bronze.warehouse_inventory_raw rows. See load_supplier_master docstring."""
     df = get_unprocessed_bronze_rows(engine, "warehouse_inventory_raw", "warehouse_inventory")
-    passed, quarantined = 0, 0
+    passed, quarantined, skipped_duplicate = 0, 0, 0
 
     with engine.connect() as conn:
         known_medicine_ids = set(pd.read_sql(text("SELECT medicine_id FROM silver.medicine_catalogue"), conn)["medicine_id"])
@@ -283,8 +316,11 @@ def load_warehouse_inventory(engine: Engine, run_id: str) -> tuple[int, int]:
                 ON CONFLICT (warehouse_id, medicine_id, batch_number) DO NOTHING
             """)
             with engine.begin() as conn:
-                conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
-            passed += 1
+                result_proxy = conn.execute(insert, {**result.cleaned_row, "bronze_id": row_dict["bronze_id"]})
+            if result_proxy.rowcount > 0:
+                passed += 1
+            else:
+                skipped_duplicate += 1
         else:
             write_to_quarantine(
                 engine, "warehouse_inventory", "warehouse_inventory", row_dict,
@@ -292,7 +328,7 @@ def load_warehouse_inventory(engine: Engine, run_id: str) -> tuple[int, int]:
             )
             quarantined += 1
 
-    return passed, quarantined
+    return passed, quarantined, skipped_duplicate
 
 
 def run_all_silver_loads() -> None:
@@ -321,12 +357,14 @@ def run_all_silver_loads() -> None:
     ]
 
     for name, loader_fn in loaders:
-        passed, quarantined = loader_fn(engine, run_id)
+        passed, quarantined, skipped_duplicate = loader_fn(engine, run_id)
         logger.info(
             f"Processed '{name}' into silver",
             extra={
                 "source": name, "rows_passed": passed,
-                "rows_quarantined": quarantined, "run_id": run_id,
+                "rows_quarantined": quarantined,
+                "rows_skipped_duplicate": skipped_duplicate,
+                "run_id": run_id,
             },
         )
 
