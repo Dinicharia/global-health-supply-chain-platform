@@ -37,6 +37,23 @@ inventory_thresholds:
   default_max_stock_units: 10000
 
 # -----------------------------------------------------------------------------
+# Data Quality Framework thresholds (Phase 8)
+# -----------------------------------------------------------------------------
+data_quality:
+  # Freshness: a source's most recent ingested_at must be within this
+  # many hours of "now" to be considered fresh. 26 hours (not 24) gives
+  # a small grace window for a daily job that might run slightly late,
+  # without masking a genuinely stale source (e.g. one that's 3 days old).
+  freshness_max_age_hours: 26
+
+  # Completeness: if today's row count for a source deviates from its
+  # trailing average by more than this percentage, flag it. 30% is
+  # deliberately loose -- our sample data has natural randomness (the
+  # ~5% injected defect rates), so a tight threshold would cause false
+  # alarms on normal runs. Tune down once real historical data exists.
+  row_count_deviation_threshold_pct: 30
+
+# -----------------------------------------------------------------------------
 # Internal data sources (implements FR-01)
 # -----------------------------------------------------------------------------
 # Each entry tells the extraction layer where to find a source and what
