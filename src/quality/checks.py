@@ -16,6 +16,13 @@ Design pattern:
     is deliberately out of scope for this phase. This mirrors the same
     separation used in validators.py: check logic stays pure and
     testable, orchestration/side-effects stay in the loader/runner layer.
+
+    Pure calculation logic (freshness window comparison, deviation
+    percentage math, tolerance comparison) is factored into standalone
+    helper functions with no database access -- same refactor pattern
+    applied to src/loading/load_gold.py in Phase 6 -- so this logic is
+    unit-testable without a live Postgres connection. See
+    tests/test_quality_checks.py.
 """
 
 from dataclasses import dataclass, field
@@ -42,6 +49,56 @@ class CheckResult:
     status: str  # "PASS" or "FAIL"
     severity: str  # "INFO", "WARNING", "CRITICAL"
     details: dict[str, Any] = field(default_factory=dict)
+
+
+# -----------------------------------------------------------------------------
+# Pure calculation helpers -- no database access, fully unit-testable.
+# -----------------------------------------------------------------------------
+# Extracted deliberately, mirroring the same refactor applied to
+# src/loading/load_gold.py in Phase 6: separating pure decision logic
+# from database I/O so it's testable without a live Postgres connection.
+
+def is_within_freshness_window(hours_since_last_ingest: float, max_age_hours: float) -> bool:
+    """
+    FRESH-01 core logic: is a source's most recent ingestion recent enough?
+
+    Args:
+        hours_since_last_ingest: Hours elapsed since the last Bronze ingest.
+        max_age_hours: Configured freshness threshold.
+
+    Returns:
+        True if within the freshness window (fresh), False if stale.
+    """
+    return hours_since_last_ingest <= max_age_hours
+
+
+def calculate_row_count_deviation_pct(today_count: int, historical_avg: float) -> float:
+    """
+    COMPLETE-01 core logic: percentage deviation of today's count from
+    the historical average.
+
+    Args:
+        today_count: Row count for the run being evaluated.
+        historical_avg: Trailing average row count across other runs.
+
+    Returns:
+        Absolute percentage deviation (always non-negative -- direction
+        of deviation, over vs under, isn't relevant to this check; both
+        a sudden spike and a sudden drop are equally worth flagging).
+
+    Raises:
+        ValueError: if historical_avg is zero -- caller must handle the
+            "insufficient history" case before calling this (dividing by
+            zero has no meaningful business answer here).
+    """
+    if historical_avg == 0:
+        raise ValueError("historical_avg cannot be zero -- caller must check for insufficient history first")
+    return abs(today_count - historical_avg) / historical_avg * 100
+
+
+def is_within_deviation_tolerance(deviation_pct: float, threshold_pct: float) -> bool:
+    """COMPLETE-01 core logic: is a deviation percentage within tolerance?"""
+    return deviation_pct <= threshold_pct
 
 
 # -----------------------------------------------------------------------------
@@ -78,7 +135,7 @@ def check_source_freshness(engine: Engine, bronze_table: str, source_name: str) 
         )
 
     hours_since_last_ingest = round(float(result), 2)
-    is_fresh = hours_since_last_ingest <= max_age_hours
+    is_fresh = is_within_freshness_window(hours_since_last_ingest, max_age_hours)
 
     return CheckResult(
         check_category="freshness", check_id="FRESH-01",
@@ -150,8 +207,8 @@ def check_row_count_deviation(engine: Engine, bronze_table: str, source_name: st
         )
 
     historical_avg = float(historical_avg)
-    deviation_pct = abs(today_count - historical_avg) / historical_avg * 100
-    is_within_tolerance = deviation_pct <= deviation_threshold_pct
+    deviation_pct = calculate_row_count_deviation_pct(today_count, historical_avg)
+    is_within_tolerance = is_within_deviation_tolerance(deviation_pct, deviation_threshold_pct)
 
     return CheckResult(
         check_category="completeness", check_id="COMPLETE-01",
