@@ -35,34 +35,23 @@ IMPORTANT -- import order:
     failure this caused).
 """
 
-import os
-
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-# Deliberately unset PREFECT_API_URL for THIS run mode only.
-#
-# .env defines PREFECT_API_URL=http://localhost:4200/api as a documented
-# placeholder for later in this phase, once we deploy a real, persistent
-# Prefect server (Decision 4 in our Phase 7 design: prove the flow logic
-# works locally/ephemerally FIRST, add server infrastructure after).
-#
-# If this variable is present when Prefect starts, it interprets it as
-# "a real server already exists at this address -- connect to it" rather
-# than "start a temporary local one." Since no server is running yet,
-# that produces a connection-refused error instead of Prefect's normal
-# ephemeral fallback behavior.
-#
-# Once we actually deploy a persistent Prefect server later in this
-# phase, this os.environ.pop() call will be removed -- at that point we
-# WANT this variable to take effect.
-os.environ.pop("PREFECT_API_URL", None)
+# PREFECT_API_URL is now loaded normally from .env, pointing at our real,
+# persistent local Prefect server (see README.md, "Running the Prefect
+# Server"). Earlier in this project's history, this value was
+# deliberately stripped out because no server existed yet and Prefect
+# needed to fall back to its own temporary ephemeral server -- now that
+# a real server exists and should be the target, we let it through.
 
 from prefect import flow, task  # noqa: E402 -- must follow load_dotenv(), see note above
+
 from src.extraction.internal_sources import run_all_internal_extractions
 from src.loading.load_gold import run_all_gold_loads
 from src.loading.load_silver import run_all_silver_loads
+from src.quality.run_checks import run_all_quality_checks
 from src.utils.generate_sample_data import main as generate_sample_data
 
 
@@ -90,6 +79,11 @@ def generate_data_task() -> str:
     generate_sample_data()
     return "data_generated"
 
+@task(retries=2, retry_delay_seconds=10, name="run-quality-checks")
+def quality_checks_task(_upstream: str) -> str:
+    """Runs Phase 8: post-pipeline data quality checks against Bronze/Silver/Gold."""
+    run_all_quality_checks()
+    return "quality_checked"
 
 @task(retries=2, retry_delay_seconds=10, name="extract-to-bronze")
 def extract_bronze_task(_upstream: str) -> str:
@@ -129,7 +123,8 @@ def run_pipeline() -> None:
     step1 = generate_data_task()
     step2 = extract_bronze_task(step1)
     step3 = load_silver_task(step2)
-    load_gold_task(step3)
+    step4 = load_gold_task(step3)
+    quality_checks_task(step4)
 
 
 if __name__ == "__main__":
