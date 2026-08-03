@@ -1,0 +1,34 @@
+# =============================================================================
+# Prefect Deployment Configuration -- DOCKER/CONTAINER VERSION
+# =============================================================================
+# Purpose: identical to prefect.yaml, except the pull step's working
+#          directory points at the CONTAINER's filesystem layout (/app,
+#          per docker/python.Dockerfile's WORKDIR), not the host
+#          machine's Windows path.
+#
+# Why a separate file rather than one shared prefect.yaml: the
+# set_working_directory pull step gets baked in with a literal,
+# environment-specific path at deploy time -- there is no single path
+# valid on both a Windows host and inside a Linux container. This
+# mirrors the same .env / .env.docker split used for database and API
+# connection settings (see .env.docker's header comment for the same
+# underlying reasoning: containers have a different filesystem/network
+# view than the host machine).
+# =============================================================================
+
+name: global-health-supply-chain-platform
+
+deployments:
+  - name: daily-pipeline-run
+    entrypoint: flows/pipeline_flow.py:run_pipeline
+    schedules:
+      - cron: "0 2 * * *"
+        active: true
+    work_pool:
+      name: local-process-pool
+      work_queue_name: default
+    pull:
+      - prefect.deployments.steps.set_working_directory:
+          # /app matches WORKDIR in docker/python.Dockerfile -- this is
+          # where COPY . . placed our code inside the container.
+          directory: /app

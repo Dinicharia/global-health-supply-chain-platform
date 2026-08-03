@@ -1,0 +1,37 @@
+# =============================================================================
+# Files excluded from the Docker build context
+# =============================================================================
+# Purpose: prevents local-machine-specific files from being copied into
+#          container images via COPY . . in docker/python.Dockerfile.
+#
+# Bug fix (see conversation history): .env was previously being copied
+# into the image because no .dockerignore existed. Once inside the
+# container, python-dotenv's load_dotenv(override=True) call in
+# src/utils/db.py found and loaded it, and its Windows-local values
+# (POSTGRES_HOST=localhost, POSTGRES_PORT=5435) OVERRODE the correct
+# .env.docker values that docker-compose.yml's env_file directive had
+# already injected -- causing the containerized pipeline to try
+# connecting to a port that only exists on the Windows host, not inside
+# the Linux container network.
+.env
+.env.docker
+
+# Local virtual environment -- never valid inside a container, which
+# has its own Python installed directly via the base image.
+.venv/
+
+# Git metadata -- irrelevant at runtime, and potentially large.
+.git/
+.gitignore
+
+# Local runtime artifacts -- regenerated inside the container itself,
+# copying host-machine versions in would be stale/pointless.
+data/raw/*
+logs/*/*
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Prefect's local state -- container gets its own, fresh, via the
+# supply-chain-prefect-data named volume, not a copy of host state.
+.prefect/

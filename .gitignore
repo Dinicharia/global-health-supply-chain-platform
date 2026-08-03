@@ -1,5 +1,6 @@
 # Environment & secrets — NEVER commit real credentials
 .env
+.env.docker
 
 # Python
 __pycache__/
@@ -47,3 +48,4 @@ Thumbs.db
 
 # Prefect local state (project-isolated, see .env PREFECT_HOME)
 .prefect/
+
