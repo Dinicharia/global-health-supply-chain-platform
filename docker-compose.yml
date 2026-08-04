@@ -1,20 +1,15 @@
 # =============================================================================
 # Docker Compose: Global Health Supply Chain Intelligence Platform
 # =============================================================================
-# Purpose: launches PostgreSQL, Prefect Server, and a Prefect Worker
-#          (which runs our pipeline on schedule) with a single command:
-#          docker compose up
-#
-# Apache Superset joins this file in Phase 11, once we're ready to
-# configure real dashboards against it -- deliberately not included yet,
-# same "don't build ahead of a proven need" principle applied throughout
-# this project.
+# Purpose: launches PostgreSQL, Prefect Server, a Prefect Worker (runs
+#          our pipeline on schedule), and Apache Superset with a single
+#          command: docker compose up -d
 # =============================================================================
 
 services:
 
   # ---------------------------------------------------------------------------
-  # PostgreSQL: bronze/silver/gold/quality schemas
+  # PostgreSQL: bronze/silver/gold/quality schemas, plus prefect/superset DBs
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16
@@ -24,25 +19,14 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      # Named volume -- persists across container restarts and
-      # `docker compose down` (without -v). See Phase 2 Backup/DR strategy.
       - supply-chain-pgdata:/var/lib/postgresql/data
-      # Mount our DDL scripts read-only so they're available for manual
-      # execution inside the container if ever needed -- NOT auto-run on
-      # startup (we deliberately keep schema application an explicit,
-      # reviewed step, not an automatic one -- see the "never edit a
-      # shipped migration" principle from Phase 2 folder structure design).
       - ./sql/schemas:/docker-entrypoint-initdb.d/manual-reference:ro
+      # Only runs automatically on a FRESH volume's first boot -- see
+      # docker/postgres-init.sql header comment.
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
     ports:
-      # Debug-only port mapping, explicitly labeled as such (Phase 2
-      # Security Strategy decision) -- lets you connect a local DB client
-      # for inspection. A real production compose file would omit this.
       - "5432:5432"
     healthcheck:
-      # pg_isready is Postgres's own built-in readiness check -- more
-      # reliable than Compose's plain "container started" signal, since
-      # a container can report "running" before Postgres is actually
-      # accepting connections yet.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
@@ -57,26 +41,11 @@ services:
     image: prefecthq/prefect:3-python3.11
     container_name: supply-chain-prefect-server
     command: prefect server start --host 0.0.0.0
-    # Wait for Postgres to be genuinely ready before Prefect's server
-    # tries to connect to it -- same healthcheck-gated pattern as every
-    # other startup dependency in this file.
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       PREFECT_HOME: /root/.prefect
-      # Bug fix (see conversation history): Prefect's DEFAULT metadata
-      # store is a local SQLite file, which only allows ONE writer at a
-      # time. Under continuous operation -- the background scheduler
-      # polling every ~10-20s while the worker simultaneously polls for
-      # work -- concurrent writes collide and fail with "database is
-      # locked," repeating forever. PostgreSQL handles concurrent writes
-      # correctly, which SQLite fundamentally cannot, regardless of
-      # tuning. This is a SEPARATE database ("prefect"), in the SAME
-      # Postgres server instance as our application database -- Prefect's
-      # own operational metadata (flow runs, deployments, task states)
-      # is a different concern from our bronze/silver/gold/quality
-      # business data and must not share tables/schemas with it.
       PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/prefect
     volumes:
       - supply-chain-prefect-data:/root/.prefect
@@ -99,8 +68,6 @@ services:
       context: .
       dockerfile: docker/python.Dockerfile
     container_name: supply-chain-prefect-worker
-    # Wait for BOTH dependencies to be genuinely HEALTHY, not just
-    # started -- see Decision 3 in the Phase 10 design discussion.
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,34 +76,48 @@ services:
     env_file:
       - .env.docker
     volumes:
-      # Bind-mount our source code so local edits are reflected without
-      # rebuilding the image every time during development. A real
-      # production deployment would omit this, relying solely on the
-      # image's baked-in COPY -- flagged here as a local-dev convenience,
-      # same pattern as the debug port mappings above.
       - ./src:/app/src
       - ./flows:/app/flows
       - ./config:/app/config
       - ./data:/app/data
       - ./logs:/app/logs
-    # Deploy (idempotent -- safe to repeat every startup) THEN start the
-    # worker -- see Decision 4. This means `docker compose up` alone
-    # results in a fully deployed, scheduled, running pipeline with zero
-    # manual `prefect deploy`/`prefect work-pool create` steps required.
-    # Bug fix (see conversation history): prefixing the FINAL command
-    # with `exec` replaces the shell process (PID 1) with
-    # `prefect worker start` itself, instead of running it as a child
-    # process. This means the worker becomes PID 1 and receives Docker's
-    # shutdown signal (SIGTERM) directly, allowing it to exit cleanly --
-    # without `exec`, the wrapping shell absorbs the signal and never
-    # forwards it, forcing Docker to SIGKILL after a timeout (visible as
-    # exit code 137). The first two commands still run normally as
-    # ordinary child processes -- only the long-running final process
-    # needs this treatment.
     command: >
       sh -c "prefect work-pool create --type process local-process-pool --overwrite &&
              prefect deploy --all --prefect-file prefect.docker.yaml &&
              exec prefect worker start --pool local-process-pool"
+    networks:
+      - supply-chain-network
+
+  # ---------------------------------------------------------------------------
+  # Apache Superset
+  # ---------------------------------------------------------------------------
+  superset:
+    build:
+      context: .
+      dockerfile: docker/superset.Dockerfile
+    container_name: supply-chain-superset
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SQLALCHEMY_DATABASE_URI: ${SUPERSET_DATABASE_URI}
+      SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+    env_file:
+      - .env.docker
+    volumes:
+      - ./docker/superset-init.sh:/app/docker/superset-init.sh:ro
+      - supply-chain-superset-data:/app/superset_home
+    ports:
+      - "8088:8088"
+    entrypoint: ["/bin/bash", "/app/docker/superset-init.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - supply-chain-network
 
@@ -149,3 +130,5 @@ volumes:
     name: supply-chain-pgdata
   supply-chain-prefect-data:
     name: supply-chain-prefect-data
+  supply-chain-superset-data:
+    name: supply-chain-superset-data
