@@ -25,7 +25,17 @@ services:
       # docker/postgres-init.sql header comment.
       - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
     ports:
-      - "5432:5432"
+      # Remapped host-side port -- 5432 collides with a native Windows
+      # PostgreSQL service that runs independently of this project and
+      # restarts on its own across reboots (see conversation history,
+      # Phase 4 and Phase 12: this is a recurring, not one-time, issue
+      # on this machine). 5433 avoids the collision without touching
+      # the native service. Internal container-to-container traffic
+      # (Prefect worker, Superset) is UNAFFECTED by this change -- they
+      # connect via the Docker network using the service name "postgres"
+      # on the container's internal port 5432, never through this
+      # published host port at all.
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
