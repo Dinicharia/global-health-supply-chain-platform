@@ -49,3 +49,12 @@ Thumbs.db
 # Prefect local state (project-isolated, see .env PREFECT_HOME)
 .prefect/
 
+# Power BI report file -- Import mode embeds a full snapshot of query
+# results directly in the .pbix binary, making this file a generated
+# data artifact (like data/raw/ or logs/), not source code. The real
+# "source" is the DAX measures and gold.* views, both already
+# documented/version-controlled in sql/schemas/10_gold_views.sql and
+# this conversation's record. Re-creating the report from those plus
+# the report structure documented in docs/ (Phase 13) is the intended
+# recovery path, not tracking the binary itself.
+*.pbix
