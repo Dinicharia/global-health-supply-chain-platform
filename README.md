@@ -21,6 +21,50 @@ runs on a daily schedule via Prefect, entirely inside Docker.
 
 ---
 
+## Architecture
+
+### System Components
+
+```mermaid
+flowchart LR
+    subgraph Docker["Docker Compose Environment"]
+        PG[(PostgreSQL<br/>bronze / silver / gold / quality)]
+        PS[Prefect Server]
+        PW[Prefect Worker<br/>+ Python ETL code]
+        SS[Apache Superset]
+    end
+    PW -->|read/write, etl_user| PG
+    PS <-->|orchestrates| PW
+    SS -->|read-only, bi_reader| PG
+    PBI[Power BI Desktop<br/>Windows host, outside Docker] -->|read-only, bi_reader| PG
+```
+
+### Medallion Data Pipeline
+
+```mermaid
+flowchart LR
+    Sources[Internal Sources<br/>CSV / JSON] --> Bronze[Bronze<br/>raw, immutable, all-TEXT]
+    Bronze -->|Gate 1: validate & type| Silver[Silver<br/>validated, typed]
+    Silver -->|Gate 2: model| Gold[Gold<br/>star schema]
+    Silver -.->|rejected rows| Quarantine[(silver.quarantine)]
+    Gold --> Quality[Automated<br/>Data Quality Checks]
+    Gold --> BI[Superset & Power BI<br/>via gold.vw_* views]
+```
+
+### Gold Layer Star Schema
+
+```mermaid
+erDiagram
+    DIM_SUPPLIER ||--o{ FACT_SHIPMENT : supplies
+    DIM_MEDICINE ||--o{ FACT_SHIPMENT : contains
+    DIM_WAREHOUSE ||--o{ FACT_SHIPMENT : "destined for"
+    DIM_DATE ||--o{ FACT_SHIPMENT : "occurred on"
+    DIM_COUNTRY ||--o{ FACT_SHIPMENT : "routed through"
+```
+
+See `docs/02_architecture.md` for the full design rationale behind every
+decision shown here.
+
 ## Prerequisites
 
 - Docker Desktop (with WSL2 backend enabled, on Windows)
