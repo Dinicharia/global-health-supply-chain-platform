@@ -1,13 +1,28 @@
 # Global Health Supply Chain Intelligence Platform
 
-A production-grade data platform for ingesting, validating, transforming,
-and reporting on global health medicine supply chain data — built as an
-enterprise-pattern learning project (Medallion architecture, Prefect
-orchestration, PostgreSQL, Apache Superset, Power BI).
+**An end-to-end, production-pattern data engineering platform** built to
+simulate real-world supply chain analytics for global health medicine
+distribution — designed and engineered the way a senior data engineering
+team would build it for an organization like WHO, UNICEF, or the Global
+Fund.
 
-**Status:** Core platform complete through Phase 12 (Superset + Power BI
-dashboards). See `docs/` for full architecture and requirements
-documentation.
+Raw supplier, shipment, and inventory data flows through a governed
+**Bronze → Silver → Gold Medallion architecture** in PostgreSQL, is
+validated against a documented rule catalogue with full quarantine
+traceability, orchestrated on a **daily automated schedule via Prefect**,
+monitored by a custom **Data Quality Framework**, fully **containerized
+with Docker Compose**, and surfaced through dual BI reporting in
+**Apache Superset and Power BI** — both reading identical, version-
+controlled business logic.
+
+Every architectural decision in this project is documented and
+justified — not just implemented. See [`docs/`](./docs) for the full
+Business Requirements Document, Architecture Guide, and an Operations
+Guide built entirely from real incidents encountered and resolved
+during development.
+
+**Tech stack:** Python · PostgreSQL · Prefect · Docker & Docker Compose
+· Apache Superset · Power BI · pytest
 
 ---
 
