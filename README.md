@@ -65,6 +65,54 @@ erDiagram
 See `docs/02_architecture.md` for the full design rationale behind every
 decision shown here.
 
+### Pipeline Orchestration (Prefect)
+
+```mermaid
+flowchart TD
+    A[generate-sample-data] --> B[extract-to-bronze]
+    B --> C[load-silver]
+    C --> D[load-gold]
+    D --> E[run-quality-checks]
+
+    style A fill:#2b2b2b,stroke:#888,color:#fff
+    style B fill:#2b2b2b,stroke:#888,color:#fff
+    style C fill:#2b2b2b,stroke:#888,color:#fff
+    style D fill:#2b2b2b,stroke:#888,color:#fff
+    style E fill:#2b2b2b,stroke:#888,color:#fff
+```
+
+One flow, five sequential tasks, each wrapping an independently-tested
+module. Each task retries twice with a 10s delay on transient failure.
+Scheduled daily at 02:00 UTC; see `docs/02_architecture.md` Section 5.
+
+### Environment Configuration: Host vs. Container
+
+```mermaid
+flowchart TB
+    subgraph Host["Windows Host"]
+        ENV[".env<br/>POSTGRES_HOST=localhost<br/>POSTGRES_PORT=5433"]
+        LocalPy[Local Python scripts]
+        PBI[Power BI Desktop]
+        LocalPy --> ENV
+    end
+    subgraph Containers["Docker Network"]
+        ENVD[".env.docker<br/>POSTGRES_HOST=postgres<br/>POSTGRES_PORT=5432"]
+        Worker[Prefect Worker]
+        Superset[Superset]
+        Worker --> ENVD
+        Superset --> ENVD
+    end
+    PG[(PostgreSQL)]
+    ENV -.->|host port 5433| PG
+    ENVD -.->|service name, port 5432| PG
+    PBI -.->|host port 5433| PG
+```
+
+Two separate env files exist because "localhost" means something
+different depending on whether code runs on the host or inside a
+container — a distinction that caused several real debugging sessions
+during development. See `docs/04_operations_guide.md`.
+
 ## Prerequisites
 
 - Docker Desktop (with WSL2 backend enabled, on Windows)
