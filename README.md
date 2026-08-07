@@ -128,6 +128,21 @@ different depending on whether code runs on the host or inside a
 container — a distinction that caused several real debugging sessions
 during development. See `docs/04_operations_guide.md`.
 
+## Dashboards
+
+### Executive Overview (Apache Superset)
+
+![Executive Overview Dashboard](docs/screenshots/executive_overview.png)
+
+Real-time KPIs and risk breakdowns — total shipments, on-time delivery
+rate, delayed shipments and procurement cost by country, and shipment
+volume trends — built on `gold.vw_shipment_details`.
+
+Both Apache Superset and Power BI connect to the same read-only
+database role and the same SQL views, so every number shown is
+independently reproducible across tools. See `docs/powerbi_setup.md`
+for the Power BI setup.
+
 ## Prerequisites
 
 - Docker Desktop (with WSL2 backend enabled, on Windows)
